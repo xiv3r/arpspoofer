@@ -2,11 +2,11 @@
 arpspoofer is an arp spoofer tool based on arping that can spoof all the address resolution protocol of th entire networks.
 
 # Platforms
-- Debian and Arch based linux distros
+- Debian based distros
 
 # Auto install
 ```
-sudo apt update && sudo apt install -y git && git clone https://github.com/xiv3r/arpspoofer.git && chmod 755 arpspoofer/spoof.sh && cd arpspoofer
+sudo apt update && sudo apt install -y arping git && git clone https://github.com/xiv3r/arpspoofer.git && chmod 755 arpspoofer/spoof.sh && cd arpspoofer
 ```
 # Usage
 ```
