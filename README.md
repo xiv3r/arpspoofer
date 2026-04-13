@@ -10,7 +10,7 @@ sudo apt update && sudo apt install -y arping git iptables ipcalc && git clone h
 ```
 # Usage
 ```
-sudo bash spoof.sh
+sudo bash netblocker.sh
 ```
 - Enter interface  = wlan0 or enter for auto detection 
 - Enter Gateway IP = 10.0.0.1 or enter for auto detection
